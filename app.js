@@ -29,7 +29,7 @@ const $toast = document.getElementById('toast');
 
 /* ---------- 유틸 ---------- */
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const pad = (n) => String(n).padStart(2, '0');
+function pad(n) { return String(n).padStart(2, '0'); }
 function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 function todayStr() { return ymd(new Date()); }
 function parseDay(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
