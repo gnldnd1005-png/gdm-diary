@@ -1,5 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY, FAMILY_EMAIL } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -211,15 +211,42 @@ async function testPush() {
   toast(error ? '실패: ' + error.message : '1분 안에 알림이 와요');
 }
 
-/* ---------- 화면: 로그인 ---------- */
+/* ---------- 가족 링크 ---------- */
+// 링크 #k=코드 로 열면 공용 계정으로 자동 로그인
+const KEY_STORE = 'gdm-family-key';
+function storedKey() { try { return localStorage.getItem(KEY_STORE); } catch { return null; } }
+function familyKey() {
+  const m = location.hash.match(/k=([^&]+)/);
+  return m ? decodeURIComponent(m[1]) : storedKey();
+}
+function familyLink() { return `${location.origin}${location.pathname}#k=${encodeURIComponent(familyKey() || '')}`; }
+
+async function signInWithKey(key) {
+  if (!key) return false;
+  const { error } = await sb.auth.signInWithPassword({ email: FAMILY_EMAIL, password: key });
+  if (error) return false;
+  try { localStorage.setItem(KEY_STORE, key); } catch { /* 저장 안 돼도 세션은 유지 */ }
+  return true;
+}
+
+async function copyLink() {
+  try {
+    await navigator.clipboard.writeText(familyLink());
+    toast('가족 링크를 복사했어요. 카톡으로 보내 주세요.');
+  } catch {
+    prompt('아래 링크를 복사하세요', familyLink());
+  }
+}
+
+/* ---------- 화면: 코드 입력 ---------- */
 function loginView() {
   return `<section class="login">
     <div class="logo">🩸</div>
     <h1>혈당일기</h1>
+    <p class="muted">가족 링크로 열어 주세요.<br>링크가 안 되면 링크의 <b>k=</b> 뒤 코드를 넣어 주세요.</p>
     <form id="login-form">
-      <label>이메일<input type="email" name="email" autocomplete="username" required></label>
-      <label>비밀번호<input type="password" name="password" autocomplete="current-password" required></label>
-      <button class="primary" type="submit">로그인</button>
+      <label>가족 코드<input type="text" name="code" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+      <button class="primary" type="submit">열기</button>
     </form>
   </section>`;
 }
@@ -394,9 +421,9 @@ function settingsView() {
       </div>
 
       <div class="panel">
-        <h3>계정</h3>
-        <p class="muted">${esc(state.user?.email)}</p>
-        <div class="btns"><button data-action="logout">로그아웃</button></div>
+        <h3>가족 링크</h3>
+        <p>이 링크로 열면 바로 기록 화면이 나와요. 두 분만 갖고 계세요.</p>
+        <div class="btns"><button data-action="copy-link">가족 링크 복사</button></div>
       </div>
     </section>`;
 }
@@ -590,7 +617,7 @@ document.addEventListener('click', async (ev) => {
     case 'push-off': return disablePush();
     case 'push-test': return testPush();
     case 'csv': return exportCsv();
-    case 'logout': await sb.auth.signOut(); return;
+    case 'copy-link': return copyLink();
   }
 });
 
@@ -620,9 +647,8 @@ document.addEventListener('submit', async (ev) => {
   const f = ev.target;
   if (f.id === 'entry-form') return saveEntry(f);
   if (f.id === 'login-form') {
-    const fd = new FormData(f);
-    const { error } = await sb.auth.signInWithPassword({ email: fd.get('email').trim(), password: fd.get('password') });
-    if (error) toast('로그인 실패: 이메일/비밀번호를 확인해 주세요');
+    const code = new FormData(f).get('code').trim().replace(/^.*k=/, '');
+    if (!(await signInWithKey(code))) toast('코드가 맞지 않아요');
     return;
   }
   if (f.id === 'settings-form') {
@@ -694,11 +720,14 @@ if (SUPABASE_URL.includes('YOUR_PROJECT')) {
   $app.innerHTML = '<p class="boot">아직 Supabase 연결 설정 전이에요.</p>';
 } else {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+  sb.auth.getSession().then(async ({ data }) => {
+    if (!data.session && !(await signInWithKey(familyKey()))) render();
+  });
   sb.auth.onAuthStateChange((event, session) => {
     const user = session?.user || null;
     // 콜백 안에서 바로 supabase를 호출하면 멈출 수 있어 다음 틱으로 미룸
     if (user && state.user?.id !== user.id) setTimeout(() => onSignedIn(user), 0);
-    else if (!user) {
+    else if (!user && event !== 'INITIAL_SESSION') {
       state.user = null;
       if (realtime) { sb.removeChannel(realtime); realtime = null; }
       render();

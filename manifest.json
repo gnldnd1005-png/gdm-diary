@@ -1,7 +1,6 @@
 {
   "name": "혈당일기",
   "short_name": "혈당일기",
-  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f6f6f4",
