@@ -1,4 +1,4 @@
-const CACHE = 'gdm-v1';
+const CACHE = 'gdm-v2';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
@@ -13,12 +13,12 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// 앱 파일은 네트워크 우선, 오프라인이면 캐시
+// 앱 파일은 네트워크 우선(브라우저 캐시도 재확인), 오프라인이면 캐시
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    fetch(new Request(e.request, { cache: 'no-cache' }))
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
