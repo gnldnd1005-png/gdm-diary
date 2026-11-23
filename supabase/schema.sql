@@ -19,6 +19,8 @@ create table if not exists public.entries (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- 식후 운동 여부 (null = 미입력)
+alter table public.entries add column if not exists exercise boolean;
 create unique index if not exists entries_day_slot_uniq on public.entries (day, slot) where slot <> 'snack';
 create index if not exists entries_day_idx on public.entries (day);
 

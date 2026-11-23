@@ -130,6 +130,7 @@ async function loadWeek() {
     .gte('day', state.weekStart).lte('day', addDays(state.weekStart, 6));
   if (error) return toast(error.message);
   state.week = data;
+  if (state.view === 'meals') await signUrls(data.map((e) => e.food_photo));
 }
 
 /* ---------- 알림 예약 ---------- */
@@ -287,8 +288,10 @@ function card(slot, e) {
       <div class="grow"><div class="sub">${meal ? `식후 ${e.post_hours || 2}시간 기준` : '공복'}${e.glucose_at ? ' · ' + hhmm(e.glucose_at) : ''}${elapsed}</div>
       <div>${value}</div></div>
       ${thumb(e.glucose_photo)}</div>`;
+  const exRow = meal && e.exercise != null
+    ? `<div class="ex ${e.exercise ? 'on' : ''}">${e.exercise ? '🚶 식후 운동 했어요' : '식후 운동 안 했어요'}</div>` : '';
   return `<div class="card ${status(e) || ''}" data-action="edit" data-slot="${slot}" data-id="${e.id}">
-    <div class="slot">${name}</div>${mealRow}${glRow}${e.memo ? `<div class="memo">${esc(e.memo)}</div>` : ''}</div>`;
+    <div class="slot">${name}</div>${mealRow}${glRow}${exRow}${e.memo ? `<div class="memo">${esc(e.memo)}</div>` : ''}</div>`;
 }
 
 function dayView() {
@@ -341,6 +344,88 @@ function chart(slot, days) {
     ${line}${dots}</svg>`;
 }
 
+function weekHeader() {
+  const end = addDays(state.weekStart, 6);
+  return `<header class="top">
+      <button class="nav" data-action="wprev" aria-label="이전 주">‹</button>
+      <div class="title"><b>${shortDay(state.weekStart)} ~ ${shortDay(end)}</b>
+        ${state.weekStart === mondayOf(todayStr()) ? '<span class="muted">이번 주</span>' : '<button class="link" data-action="wthis">이번 주로</button>'}</div>
+      <button class="nav" data-action="wnext" aria-label="다음 주">›</button>
+    </header>`;
+}
+
+// 식후 운동한 식사 vs 안 한 식사의 식후 혈당 비교
+function exercisePanel() {
+  const post = state.week.filter((e) => e.slot !== 'fasting' && e.glucose != null && e.exercise != null);
+  if (!post.length) {
+    return `<div class="panel"><div class="panel-head"><b>🚶 식후 운동</b><span class="muted">기록 없음</span></div>
+      <p class="hint">식사를 기록할 때 식후 운동 여부를 남기면, 운동한 날과 안 한 날의 혈당을 비교해 드려요.</p></div>`;
+  }
+  const grp = (v) => {
+    const g = post.filter((e) => e.exercise === v);
+    if (!g.length) return { n: 0 };
+    return {
+      n: g.length,
+      avg: Math.round(g.reduce((a, e) => a + e.glucose, 0) / g.length),
+      ok: Math.round((g.filter((e) => status(e) === 'ok').length / g.length) * 100),
+    };
+  };
+  const yes = grp(true), no = grp(false);
+  const col = (label, r) => `<div class="tile"><span class="muted">${label} · ${r.n}회</span>
+    <b>${r.n ? r.avg : '–'}<small>${r.n ? 'mg/dL' : ''}</small></b><span class="muted">${r.n ? `목표 달성 ${r.ok}%` : '기록 없음'}</span></div>`;
+  let note = '';
+  if (yes.n && no.n) {
+    const d = no.avg - yes.avg;
+    note = `<p class="hint">${d > 0 ? `운동한 식사가 평균 <b>${d}</b> 낮았어요.` : d < 0 ? `이번 주는 운동한 식사가 평균 ${-d} 높았어요.` : '평균이 같았어요.'} (식후 혈당 평균)</p>`;
+  }
+  return `<div class="panel"><div class="panel-head"><b>🚶 식후 운동별 식후 혈당</b></div>
+    <div class="tiles two-col">${col('운동 함', yes)}${col('운동 안 함', no)}</div>${note}</div>`;
+}
+
+/* ---------- 화면: 주간 식단 ---------- */
+const MEAL_ORDER = { breakfast: 1, lunch: 2, dinner: 3, snack: 4 };
+function mealLine(e) {
+  const st = status(e);
+  const gl = e.glucose != null ? `<span class="cell ${st}">${e.glucose}${st === 'high' ? ' ▲' : st === 'low' ? ' ▼' : ''}</span>` : '';
+  return `<div class="meal-line" data-action="goto" data-day="${e.day}">
+    <span class="meal-slot">${SLOT_NAME[e.slot]}${e.meal_at ? `<small>${hhmm(e.meal_at)}</small>` : ''}</span>
+    <div class="grow">
+      <div class="food">${e.food ? esc(e.food) : '<span class="muted">메뉴 미입력</span>'}</div>
+      <div class="meal-meta">${gl}${e.exercise ? '<span class="ex-ico" title="식후 운동">🚶</span>' : ''}</div>
+    </div>${thumb(e.food_photo)}</div>`;
+}
+
+function mealsView() {
+  const days = [...Array(7)].map((_, i) => addDays(state.weekStart, i));
+  const meals = state.week.filter((e) => e.slot !== 'fasting')
+    .sort((a, b) => MEAL_ORDER[a.slot] - MEAL_ORDER[b.slot] || String(a.meal_at || a.created_at).localeCompare(String(b.meal_at || b.created_at)));
+  const exCount = meals.filter((e) => e.exercise).length;
+  const high = meals.filter((e) => status(e) === 'high');
+  const dayBlocks = days.map((d) => {
+    const list = meals.filter((e) => e.day === d);
+    const isToday = d === todayStr();
+    return `<div class="panel day-block">
+      <div class="panel-head" data-action="goto" data-day="${d}"><b>${shortDay(d)}${isToday ? ' · 오늘' : ''}</b><span class="link">기록 보기 ›</span></div>
+      ${list.length ? list.map(mealLine).join('') : '<p class="muted">식사 기록 없음</p>'}</div>`;
+  }).join('');
+  const highPanel = high.length ? `<div class="panel">
+      <div class="panel-head"><b>⚠️ 식후 혈당이 높았던 식사</b><span class="muted">${high.length}회</span></div>
+      ${high.map((e) => `<div class="meal-line" data-action="goto" data-day="${e.day}">
+        <span class="meal-slot">${shortDay(e.day)}<small>${SLOT_NAME[e.slot]}</small></span>
+        <div class="grow"><div class="food">${e.food ? esc(e.food) : '<span class="muted">메뉴 미입력</span>'}</div></div>
+        <span class="cell high">${e.glucose} ▲</span></div>`).join('')}</div>` : '';
+  return `${weekHeader()}
+    <section class="list">
+      <div class="tiles">
+        <div class="tile"><span class="muted">식사 기록</span><b>${meals.length}<small>끼</small></b></div>
+        <div class="tile"><span class="muted">식후 운동</span><b>${exCount}<small>회</small></b></div>
+        <div class="tile"><span class="muted">혈당 초과</span><b>${high.length}<small>끼</small></b></div>
+      </div>
+      ${dayBlocks}
+      ${highPanel}
+    </section>`;
+}
+
 function statsView() {
   const days = [...Array(7)].map((_, i) => addDays(state.weekStart, i));
   const measured = state.week.filter((e) => e.glucose != null);
@@ -360,19 +445,14 @@ function statsView() {
     return `<div class="panel"><div class="panel-head"><b>${SLOT_NAME[k]}</b>
       <span class="muted">${avg != null ? `평균 ${avg} · 초과 ${over}회` : '기록 없음'}</span></div>${chart(k, days)}</div>`;
   }).join('');
-  const end = addDays(state.weekStart, 6);
-  return `<header class="top">
-      <button class="nav" data-action="wprev" aria-label="이전 주">‹</button>
-      <div class="title"><b>${shortDay(state.weekStart)} ~ ${shortDay(end)}</b>
-        ${state.weekStart === mondayOf(todayStr()) ? '<span class="muted">이번 주</span>' : '<button class="link" data-action="wthis">이번 주로</button>'}</div>
-      <button class="nav" data-action="wnext" aria-label="다음 주">›</button>
-    </header>
+  return `${weekHeader()}
     <section class="list">
       <div class="tiles">
         <div class="tile"><span class="muted">측정</span><b>${measured.length}<small>회</small></b></div>
         <div class="tile"><span class="muted">목표 달성</span><b>${okRate ?? '–'}<small>${okRate != null ? '%' : ''}</small></b></div>
         <div class="tile"><span class="muted">초과</span><b>${count('high')}<small>회</small></b></div>
       </div>
+      ${exercisePanel()}
       <div class="panel"><table class="grid-table">
         <thead><tr><th></th>${SLOTS.map((k) => `<th>${SLOT_NAME[k]}</th>`).join('')}</tr></thead>
         <tbody>${rows}</tbody></table>
@@ -457,6 +537,11 @@ function openSheet(slot, id) {
         <label>식사 시작 시각<input type="time" name="meal_time" value="${mealTime}"></label>
         <label>무엇을 먹었나요<textarea name="food" rows="2" placeholder="예) 현미밥 반 공기, 된장국, 계란말이">${esc(e?.food)}</textarea></label>
         ${photoField('food')}
+        <div class="field"><span>🚶 식후 운동 (걷기 등)</span>
+          <div class="seg">
+            <label><input type="radio" name="exercise" value="yes" ${e?.exercise === true ? 'checked' : ''}><span>했어요</span></label>
+            <label><input type="radio" name="exercise" value="no" ${e?.exercise === false ? 'checked' : ''}><span>안 했어요</span></label>
+          </div></div>
       </fieldset>` : ''}
       <fieldset><legend>🩸 혈당</legend>
         ${meal ? `<div class="seg">
@@ -468,7 +553,7 @@ function openSheet(slot, id) {
         </div>
         ${photoField('glucose')}
       </fieldset>
-      <label>메모<textarea name="memo" rows="2" placeholder="컨디션, 운동, 특이사항">${esc(e?.memo)}</textarea></label>
+      <label>메모<textarea name="memo" rows="2" placeholder="컨디션, 특이사항">${esc(e?.memo)}</textarea></label>
       ${meal ? '<p class="hint">식사만 먼저 저장해 두면, 측정 시간에 알림이 와요. 혈당은 나중에 다시 눌러 입력하세요.</p>' : ''}
       <div class="actions">
         ${e ? '<button type="button" class="danger" data-action="delete">삭제</button>' : ''}
@@ -503,13 +588,20 @@ async function saveEntry(form) {
       row.food = fd.get('food').trim() || null;
       row.post_hours = Number(fd.get('post_hours') || state.settings.postHours);
       row.food_photo = ed.foodFile ? await uploadPhoto(ed.foodFile, ed.day) : ed.food_photo;
+      const ex = fd.get('exercise');
+      row.exercise = ex === 'yes' ? true : ex === 'no' ? false : null;
     }
     row.glucose_photo = ed.glucoseFile ? await uploadPhoto(ed.glucoseFile, ed.day) : ed.glucose_photo;
 
-    const q = ed.id
-      ? sb.from('entries').update({ ...row, updated_at: new Date().toISOString() }).eq('id', ed.id)
-      : sb.from('entries').insert(row);
-    const { data: saved, error } = await q.select().single();
+    const write = (r) => (ed.id
+      ? sb.from('entries').update({ ...r, updated_at: new Date().toISOString() }).eq('id', ed.id)
+      : sb.from('entries').insert(r)).select().single();
+    let { data: saved, error } = await write(row);
+    // DB에 운동 칸이 아직 없으면 그 칸만 빼고 저장
+    if (error && /exercise/.test(error.message || '')) {
+      delete row.exercise;
+      ({ data: saved, error } = await write(row));
+    }
     if (error) throw error.code === '23505' ? new Error('다른 기기에서 이미 기록했어요. 화면을 새로고침해 주세요.') : error;
 
     const old = [ed.orig?.food_photo, ed.orig?.glucose_photo].filter((p) => p && p !== saved.food_photo && p !== saved.glucose_photo);
@@ -554,9 +646,10 @@ async function exportCsv() {
   const order = { fasting: 0, breakfast: 1, lunch: 2, dinner: 3, snack: 4 };
   data.sort((a, b) => a.day.localeCompare(b.day) || order[a.slot] - order[b.slot]);
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const head = ['날짜', '구분', '식사시각', '메뉴', '측정기준', '혈당(mg/dL)', '측정시각', '판정', '메모'];
+  const head = ['날짜', '구분', '식사시각', '메뉴', '식후운동', '측정기준', '혈당(mg/dL)', '측정시각', '판정', '메모'];
   const lines = data.map((e) => [
     e.day, SLOT_NAME[e.slot], hhmm(e.meal_at), e.food,
+    e.exercise == null ? '' : e.exercise ? '함' : '안 함',
     e.slot === 'fasting' ? '공복' : `식후 ${e.post_hours || 2}시간`,
     e.glucose, hhmm(e.glucose_at), status(e) ? STATUS_LABEL[status(e)].slice(2) : '', e.memo,
   ].map(q).join(','));
@@ -571,16 +664,17 @@ async function exportCsv() {
 /* ---------- 렌더 ---------- */
 function render() {
   if (!state.user) { $app.innerHTML = loginView(); return; }
-  const body = state.view === 'day' ? dayView() : state.view === 'stats' ? statsView() : settingsView();
+  const views = { day: dayView, meals: mealsView, stats: statsView, settings: settingsView };
+  const body = (views[state.view] || dayView)();
   const tab = (v, ico, label) => `<button class="${state.view === v ? 'on' : ''}" data-action="tab" data-view="${v}"><span>${ico}</span>${label}</button>`;
   $app.innerHTML = `<main>${body}</main>
-    <nav class="tabs">${tab('day', '📝', '기록')}${tab('stats', '📊', '통계')}${tab('settings', '⚙️', '설정')}</nav>`;
+    <nav class="tabs">${tab('day', '📝', '기록')}${tab('meals', '🍱', '식단')}${tab('stats', '📊', '통계')}${tab('settings', '⚙️', '설정')}</nav>`;
 }
 
 async function refresh() {
   if (!state.user) return render();
   if (state.view === 'day') await loadDay();
-  if (state.view === 'stats') await loadWeek();
+  if (state.view === 'stats' || state.view === 'meals') await loadWeek();
   if (state.view === 'settings') await refreshPushState();
   render();
 }
