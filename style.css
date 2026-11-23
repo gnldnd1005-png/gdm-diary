@@ -194,6 +194,13 @@ button:disabled { opacity: .6; }
 /* 식후 운동 */
 .ex { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 6px; margin-top: 2px; }
 .ex.on { color: var(--good-ink); font-weight: 600; }
+.ex-min { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.ex-min[hidden] { display: none; }
+.chip { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 7px 12px; font-size: 14px; color: var(--text-2); min-height: 36px; }
+.chip.on { background: var(--good-bg); color: var(--good-ink); border-color: var(--good); font-weight: 600; }
+.min-input { flex-direction: row; align-items: center; gap: 4px; font-size: 14px; }
+.min-input input { width: 72px; min-height: 36px; padding: 6px 8px; }
+.ex-ico { color: var(--good-ink); font-weight: 600; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; color: var(--text-2); }
 
 /* 주간 식단 */

@@ -1,4 +1,4 @@
-const CACHE = 'gdm-v3';
+const CACHE = 'gdm-v4';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.json', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

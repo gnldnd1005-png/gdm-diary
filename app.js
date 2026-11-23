@@ -289,7 +289,7 @@ function card(slot, e) {
       <div>${value}</div></div>
       ${thumb(e.glucose_photo)}</div>`;
   const exRow = meal && e.exercise != null
-    ? `<div class="ex ${e.exercise ? 'on' : ''}">${e.exercise ? '🚶 식후 운동 했어요' : '식후 운동 안 했어요'}</div>` : '';
+    ? `<div class="ex ${e.exercise ? 'on' : ''}">${e.exercise ? `🚶 식후 운동 ${e.exercise_min ? e.exercise_min + '분' : '했어요'}` : '식후 운동 안 했어요'}</div>` : '';
   return `<div class="card ${status(e) || ''}" data-action="edit" data-slot="${slot}" data-id="${e.id}">
     <div class="slot">${name}</div>${mealRow}${glRow}${exRow}${e.memo ? `<div class="memo">${esc(e.memo)}</div>` : ''}</div>`;
 }
@@ -371,6 +371,8 @@ function exercisePanel() {
     };
   };
   const yes = grp(true), no = grp(false);
+  const withMin = post.filter((e) => e.exercise && e.exercise_min);
+  const avgMin = withMin.length ? Math.round(withMin.reduce((a, e) => a + e.exercise_min, 0) / withMin.length) : null;
   const col = (label, r) => `<div class="tile"><span class="muted">${label} · ${r.n}회</span>
     <b>${r.n ? r.avg : '–'}<small>${r.n ? 'mg/dL' : ''}</small></b><span class="muted">${r.n ? `목표 달성 ${r.ok}%` : '기록 없음'}</span></div>`;
   let note = '';
@@ -378,7 +380,7 @@ function exercisePanel() {
     const d = no.avg - yes.avg;
     note = `<p class="hint">${d > 0 ? `운동한 식사가 평균 <b>${d}</b> 낮았어요.` : d < 0 ? `이번 주는 운동한 식사가 평균 ${-d} 높았어요.` : '평균이 같았어요.'} (식후 혈당 평균)</p>`;
   }
-  return `<div class="panel"><div class="panel-head"><b>🚶 식후 운동별 식후 혈당</b></div>
+  return `<div class="panel"><div class="panel-head"><b>🚶 식후 운동별 식후 혈당</b>${avgMin ? `<span class="muted">평균 운동 ${avgMin}분</span>` : ''}</div>
     <div class="tiles two-col">${col('운동 함', yes)}${col('운동 안 함', no)}</div>${note}</div>`;
 }
 
@@ -393,7 +395,7 @@ function mealLine(e) {
     <span class="meal-slot">${SLOT_NAME[e.slot]}${e.meal_at ? `<small>${hhmm(e.meal_at)}</small>` : ''}</span>
     <div class="grow">
       <div class="food">${e.food ? esc(e.food) : '<span class="muted">메뉴 미입력</span>'}</div>
-      <div class="meal-meta">${gl}${e.exercise ? '<span class="ex-ico" title="식후 운동">🚶</span>' : ''}</div>
+      <div class="meal-meta">${gl}${e.exercise ? `<span class="ex-ico">🚶${e.exercise_min ? ' ' + e.exercise_min + '분' : ''}</span>` : ''}</div>
     </div>${thumb(e.food_photo)}</div>`;
 }
 
@@ -543,6 +545,10 @@ function openSheet(slot, id) {
           <div class="seg">
             <label><input type="radio" name="exercise" value="yes" ${e?.exercise === true ? 'checked' : ''}><span>했어요</span></label>
             <label><input type="radio" name="exercise" value="no" ${e?.exercise === false ? 'checked' : ''}><span>안 했어요</span></label>
+          </div>
+          <div class="ex-min" ${e?.exercise === true ? '' : 'hidden'}>
+            ${[10, 15, 20, 30].map((m) => `<button type="button" class="chip ${e?.exercise_min === m ? 'on' : ''}" data-action="ex-min" data-min="${m}">${m}분</button>`).join('')}
+            <label class="min-input"><input type="number" inputmode="numeric" name="exercise_min" min="1" max="300" value="${e?.exercise_min ?? ''}" placeholder="직접">분</label>
           </div></div>
       </fieldset>` : ''}
       <fieldset><legend>🩸 혈당</legend>
@@ -591,7 +597,9 @@ async function saveEntry(form) {
       row.post_hours = Number(fd.get('post_hours') || state.settings.postHours);
       row.food_photo = ed.foodFile ? await uploadPhoto(ed.foodFile, ed.day) : ed.food_photo;
       const ex = fd.get('exercise');
-      row.exercise = ex === 'yes' ? true : ex === 'no' ? false : null;
+      const mins = Math.round(Number(fd.get('exercise_min'))) || null;
+      row.exercise = ex === 'yes' || (ex == null && mins) ? true : ex === 'no' ? false : null;
+      row.exercise_min = row.exercise ? mins : null;
     }
     row.glucose_photo = ed.glucoseFile ? await uploadPhoto(ed.glucoseFile, ed.day) : ed.glucose_photo;
 
@@ -600,9 +608,12 @@ async function saveEntry(form) {
       : sb.from('entries').insert(r)).select().single();
     let { data: saved, error } = await write(row);
     // DB에 운동 칸이 아직 없으면 그 칸만 빼고 저장
-    if (error && /exercise/.test(error.message || '')) {
-      delete row.exercise;
-      ({ data: saved, error } = await write(row));
+    for (const col of ['exercise_min', 'exercise']) {
+      if (error && (error.message || '').includes(col) && col in row) {
+        delete row[col];
+        if (col === 'exercise') delete row.exercise_min;
+        ({ data: saved, error } = await write(row));
+      }
     }
     if (error) throw error.code === '23505' ? new Error('다른 기기에서 이미 기록했어요. 화면을 새로고침해 주세요.') : error;
 
@@ -651,7 +662,7 @@ async function exportCsv() {
   const head = ['날짜', '구분', '식사시각', '메뉴', '식후운동', '측정기준', '혈당(mg/dL)', '측정시각', '판정', '메모'];
   const lines = data.map((e) => [
     e.day, SLOT_NAME[e.slot], hhmm(e.meal_at), e.food,
-    e.exercise == null ? '' : e.exercise ? '함' : '안 함',
+    e.exercise == null ? '' : e.exercise ? (e.exercise_min ? `${e.exercise_min}분` : '함') : '안 함',
     e.slot === 'fasting' ? '공복' : `식후 ${e.post_hours || 2}시간`,
     e.glucose, hhmm(e.glucose_at), status(e) ? STATUS_LABEL[status(e)].slice(2) : '', e.memo,
   ].map(q).join(','));
@@ -695,6 +706,13 @@ document.addEventListener('click', async (ev) => {
     case 'edit': return openSheet(el.dataset.slot, el.dataset.id);
     case 'close-sheet': return closeSheet();
     case 'delete': return deleteEntry();
+    case 'ex-min': {
+      const f = el.form;
+      f.elements.exercise_min.value = el.dataset.min;
+      f.querySelector('input[name=exercise][value=yes]').checked = true;
+      f.querySelectorAll('.ex-min .chip').forEach((c) => c.classList.toggle('on', c === el));
+      return;
+    }
     case 'photo-remove': {
       const k = el.dataset.kind;
       Object.assign(state.edit, { [k + 'File']: null, [k + 'Preview']: null, [k + '_photo']: null });
@@ -721,6 +739,11 @@ $viewer.addEventListener('click', () => { $viewer.hidden = true; $viewer.innerHT
 
 document.addEventListener('change', (ev) => {
   const inp = ev.target;
+  if (inp.name === 'exercise') {
+    const box = inp.form.querySelector('.ex-min');
+    box.hidden = inp.value !== 'yes';
+    if (box.hidden) inp.form.elements.exercise_min.value = '';
+  }
   if (inp.type === 'file' && inp.dataset.kind && state.edit) {
     const k = inp.dataset.kind;
     const file = inp.files[0];
@@ -732,6 +755,10 @@ document.addEventListener('change', (ev) => {
 
 // 혈당을 입력하면 측정 시각이 비어 있을 때 지금 시각으로 채움
 document.addEventListener('input', (ev) => {
+  if (ev.target.name === 'exercise_min') {
+    const v = ev.target.value;
+    ev.target.form.querySelectorAll('.ex-min .chip').forEach((c) => c.classList.toggle('on', c.dataset.min === v));
+  }
   if (ev.target.name === 'glucose') {
     const t = ev.target.form.elements.glucose_time;
     if (t && !t.value && ev.target.value) t.value = nowHHMM();

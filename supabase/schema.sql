@@ -21,6 +21,7 @@ create table if not exists public.entries (
 );
 -- 식후 운동 여부 (null = 미입력)
 alter table public.entries add column if not exists exercise boolean;
+alter table public.entries add column if not exists exercise_min int check (exercise_min between 1 and 300);
 create unique index if not exists entries_day_slot_uniq on public.entries (day, slot) where slot <> 'snack';
 create index if not exists entries_day_idx on public.entries (day);
 
