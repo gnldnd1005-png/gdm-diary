@@ -383,7 +383,9 @@ function exercisePanel() {
 }
 
 /* ---------- 화면: 주간 식단 ---------- */
-const MEAL_ORDER = { breakfast: 1, lunch: 2, dinner: 3, snack: 4 };
+// 먹은 시각 순, 시각이 없으면 끼니 기본 시각으로
+const MEAL_ORDER = { breakfast: '08:00', lunch: '12:00', dinner: '18:00', snack: '23:59' };
+const mealKey = (e) => (e.meal_at ? hhmm(e.meal_at) : MEAL_ORDER[e.slot]);
 function mealLine(e) {
   const st = status(e);
   const gl = e.glucose != null ? `<span class="cell ${st}">${e.glucose}${st === 'high' ? ' ▲' : st === 'low' ? ' ▼' : ''}</span>` : '';
@@ -398,7 +400,7 @@ function mealLine(e) {
 function mealsView() {
   const days = [...Array(7)].map((_, i) => addDays(state.weekStart, i));
   const meals = state.week.filter((e) => e.slot !== 'fasting')
-    .sort((a, b) => MEAL_ORDER[a.slot] - MEAL_ORDER[b.slot] || String(a.meal_at || a.created_at).localeCompare(String(b.meal_at || b.created_at)));
+    .sort((a, b) => mealKey(a).localeCompare(mealKey(b)));
   const exCount = meals.filter((e) => e.exercise).length;
   const high = meals.filter((e) => status(e) === 'high');
   const dayBlocks = days.map((d) => {
