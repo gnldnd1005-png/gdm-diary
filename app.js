@@ -63,7 +63,7 @@ function toast(msg) {
 function targetFor(e) {
   const s = state.settings;
   if (e.slot === 'fasting') return s.fasting;
-  if (e.slot === 'bedtime') return s.post2h;
+  if (e.slot === 'bedtime') return s.fasting;
   return e.post_hours === 1 ? s.post1h : s.post2h;
 }
 function status(e) {
@@ -345,7 +345,7 @@ function chart(slot, days, field = 'glucose') {
     return e ? { i, e, v: e[field] } : null;
   }).filter(Boolean);
   if (!pts.length) return `<p class="muted" style="font-size:13px;text-align:center;padding:16px 0">기록 없음</p>`;
-  const target = isPre ? s.fasting : slot === 'fasting' ? s.fasting : slot === 'bedtime' ? s.post2h : (s.postHours === 1 ? s.post1h : s.post2h);
+  const target = isPre || slot === 'fasting' || slot === 'bedtime' ? s.fasting : (s.postHours === 1 ? s.post1h : s.post2h);
   const vals = pts.map((p) => p.v);
   const lo = Math.floor((Math.min(target, ...vals) - 20) / 20) * 20;
   const hi = Math.ceil((Math.max(target, ...vals) + 20) / 20) * 20;
