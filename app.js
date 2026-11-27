@@ -3,8 +3,11 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY, FAMILY_EMAIL } from 
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const SLOTS = ['fasting', 'breakfast', 'lunch', 'dinner', 'bedtime'];
+const SLOTS = ['breakfast', 'lunch', 'dinner', 'bedtime'];
 const SLOT_NAME = { fasting: '공복', breakfast: '아침', lunch: '점심', dinner: '저녁', snack: '간식', bedtime: '취침 전' };
+const KETONE_LABEL = { 0: '음성 (-)', 5: '± 양성 (5)', 15: '+ 양성 (15)', 50: '++ 양성 (50)', 100: '+++ 양성 (100)' };
+const KETONE_OPTIONS = ['', '0', '5', '15', '50', '100'];
+const KETONE_DISPLAY = { '': '선택 안 함', '0': '음성 (-)', '5': '± (5 mg/dL)', '15': '+ (15 mg/dL)', '50': '++ (50 mg/dL)', '100': '+++ (100 mg/dL)' };
 // 대한당뇨병학회 임신성당뇨 혈당 목표 (병원 지시가 다르면 설정에서 변경)
 const DEFAULTS = { fasting: 95, post1h: 140, post2h: 120, low: 60, postHours: 2, mealAlarm: true, fastingAlarm: '07:00' };
 const STATUS_LABEL = { ok: '✓ 정상', high: '▲ 초과', low: '▼ 낮음' };
@@ -290,10 +293,11 @@ function card(slot, e) {
       <div class="grow"><div class="sub">식사${e.meal_at ? ' ' + hhmm(e.meal_at) : ''}</div>
       <div class="food">${e.food ? esc(e.food) : '<span class="muted">메뉴 미입력</span>'}</div></div>
       ${thumb(e.food_photo)}</div>` : '';
+  const preGlLabel = slot === 'breakfast' ? '공복' : '식전';
   const preGlRow = meal && e.pre_glucose != null
     ? `<div class="row">
         <span class="ico">🩸</span>
-        <div class="grow"><div class="sub">식전${e.pre_glucose_at ? ' · ' + hhmm(e.pre_glucose_at) : ''}</div>
+        <div class="grow"><div class="sub">${preGlLabel}${e.pre_glucose_at ? ' · ' + hhmm(e.pre_glucose_at) : ''}</div>
         <div><b class="num">${e.pre_glucose}</b><span class="unit">mg/dL</span> ${preBadge(e)}</div></div></div>`
     : '';
   const value = e.glucose != null
@@ -305,9 +309,9 @@ function card(slot, e) {
       <div class="grow"><div class="sub">${glSubLabel}${e.glucose_at ? ' · ' + hhmm(e.glucose_at) : ''}${elapsed}</div>
       <div>${value}</div></div>
       ${thumb(e.glucose_photo)}</div>`;
-  const ketoneRow = slot === 'fasting' && e.ketone != null
-    ? `<div class="row"><span class="ico">🧪</span><div class="grow"><div class="sub">케톤</div>
-        <div><b class="num">${e.ketone}</b><span class="unit">mmol/L</span></div></div></div>`
+  const ketoneRow = slot === 'breakfast' && e.ketone != null
+    ? `<div class="row"><span class="ico">🧪</span><div class="grow"><div class="sub">케톤 (소변)</div>
+        <div>${KETONE_LABEL[e.ketone] ?? e.ketone}</div></div></div>`
     : '';
   const exRow = meal && e.exercise != null
     ? `<div class="ex ${e.exercise ? 'on' : ''}">${e.exercise ? `🚶 식후 운동 ${e.exercise_min ? e.exercise_min + '분' : '했어요'}` : '식후 운동 안 했어요'}</div>` : '';
@@ -574,8 +578,8 @@ function openSheet(slot, id) {
       </fieldset>` : ''}
       <fieldset><legend>🩸 혈당</legend>
         ${meal ? `<div class="two">
-          <label>식전 혈당 (mg/dL)<input type="number" inputmode="numeric" name="pre_glucose" min="20" max="600" value="${e?.pre_glucose ?? ''}" placeholder="선택"></label>
-          <label>식전 시각<input type="time" name="pre_glucose_time" value="${e ? hhmm(e.pre_glucose_at) : ''}"></label>
+          <label>${slot === 'breakfast' ? '공복 혈당 (mg/dL)' : '식전 혈당 (mg/dL)'}<input type="number" inputmode="numeric" name="pre_glucose" min="20" max="600" value="${e?.pre_glucose ?? ''}" placeholder="선택"></label>
+          <label>${slot === 'breakfast' ? '공복 시각' : '식전 시각'}<input type="time" name="pre_glucose_time" value="${e ? hhmm(e.pre_glucose_at) : ''}"></label>
         </div>
         <div class="seg">
           <label><input type="radio" name="post_hours" value="1" ${ph === 1 ? 'checked' : ''}><span>식후 1시간</span></label>
@@ -585,7 +589,14 @@ function openSheet(slot, id) {
           <label>측정 시각<input type="time" name="glucose_time" value="${glTime}"></label>
         </div>
         ${photoField('glucose')}
-        ${slot === 'fasting' ? `<label>케톤 (mmol/L, 선택)<input type="number" inputmode="decimal" step="0.1" name="ketone" min="0" max="20" value="${e?.ketone ?? ''}" placeholder="예) 0.3"></label>` : ''}
+        ${slot === 'breakfast' ? `<label>케톤 (소변 검사)<select name="ketone">
+          <option value="">선택 안 함</option>
+          <option value="0" ${e?.ketone === 0 ? 'selected' : ''}>음성 (-)</option>
+          <option value="5" ${e?.ketone === 5 ? 'selected' : ''}>± (5 mg/dL) 양성</option>
+          <option value="15" ${e?.ketone === 15 ? 'selected' : ''}>+ (15 mg/dL) 양성</option>
+          <option value="50" ${e?.ketone === 50 ? 'selected' : ''}>++ (50 mg/dL) 양성</option>
+          <option value="100" ${e?.ketone === 100 ? 'selected' : ''}>+++ (100 mg/dL) 양성</option>
+        </select></label>` : ''}
       </fieldset>
       <label>메모<textarea name="memo" rows="2" placeholder="컨디션, 특이사항">${esc(e?.memo)}</textarea></label>
       ${meal ? '<p class="hint">식사만 먼저 저장해 두면, 측정 시간에 알림이 와요. 혈당은 나중에 다시 눌러 입력하세요.</p>' : ''}
@@ -631,7 +642,7 @@ async function saveEntry(form) {
       const pgt = fd.get('pre_glucose_time');
       row.pre_glucose_at = row.pre_glucose != null || pgt ? toIso(ed.day, pgt || null) : null;
     }
-    if (ed.slot === 'fasting') {
+    if (ed.slot === 'breakfast') {
       const k = fd.get('ketone');
       row.ketone = k === '' || k == null ? null : parseFloat(k);
     }
