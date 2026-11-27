@@ -22,6 +22,14 @@ create table if not exists public.entries (
 -- 식후 운동 여부 (null = 미입력)
 alter table public.entries add column if not exists exercise boolean;
 alter table public.entries add column if not exists exercise_min int check (exercise_min between 1 and 300);
+-- 케톤 수치 (공복 측정, mmol/L)
+alter table public.entries add column if not exists ketone numeric(4,1) check (ketone between 0 and 20);
+-- 식전 혈당
+alter table public.entries add column if not exists pre_glucose int check (pre_glucose between 10 and 700);
+alter table public.entries add column if not exists pre_glucose_at timestamptz;
+-- 취침 전 슬롯 추가
+alter table public.entries drop constraint if exists entries_slot_check;
+alter table public.entries add constraint entries_slot_check check (slot in ('fasting', 'breakfast', 'lunch', 'dinner', 'snack', 'bedtime'));
 create unique index if not exists entries_day_slot_uniq on public.entries (day, slot) where slot <> 'snack';
 create index if not exists entries_day_idx on public.entries (day);
 

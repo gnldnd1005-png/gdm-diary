@@ -3,8 +3,8 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, VAPID_PUBLIC_KEY, FAMILY_EMAIL } from 
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const SLOTS = ['fasting', 'breakfast', 'lunch', 'dinner'];
-const SLOT_NAME = { fasting: '공복', breakfast: '아침', lunch: '점심', dinner: '저녁', snack: '간식' };
+const SLOTS = ['fasting', 'breakfast', 'lunch', 'dinner', 'bedtime'];
+const SLOT_NAME = { fasting: '공복', breakfast: '아침', lunch: '점심', dinner: '저녁', snack: '간식', bedtime: '취침 전' };
 // 대한당뇨병학회 임신성당뇨 혈당 목표 (병원 지시가 다르면 설정에서 변경)
 const DEFAULTS = { fasting: 95, post1h: 140, post2h: 120, low: 60, postHours: 2, mealAlarm: true, fastingAlarm: '07:00' };
 const STATUS_LABEL = { ok: '✓ 정상', high: '▲ 초과', low: '▼ 낮음' };
@@ -60,6 +60,7 @@ function toast(msg) {
 function targetFor(e) {
   const s = state.settings;
   if (e.slot === 'fasting') return s.fasting;
+  if (e.slot === 'bedtime') return s.post2h;
   return e.post_hours === 1 ? s.post1h : s.post2h;
 }
 function status(e) {
@@ -69,6 +70,15 @@ function status(e) {
 }
 function badge(e) {
   const st = status(e);
+  return st ? `<span class="badge ${st}">${STATUS_LABEL[st]}</span>` : '';
+}
+function preStatus(e) {
+  if (e.pre_glucose == null) return null;
+  if (e.pre_glucose < state.settings.low) return 'low';
+  return e.pre_glucose < state.settings.fasting ? 'ok' : 'high';
+}
+function preBadge(e) {
+  const st = preStatus(e);
   return st ? `<span class="badge ${st}">${STATUS_LABEL[st]}</span>` : '';
 }
 
@@ -135,7 +145,7 @@ async function loadWeek() {
 
 /* ---------- 알림 예약 ---------- */
 async function syncMealReminder(e) {
-  if (e.slot === 'fasting') return;
+  if (e.slot === 'fasting' || e.slot === 'bedtime') return;
   const key = `meal-${e.id}`;
   const due = e.meal_at && new Date(new Date(e.meal_at).getTime() + (e.post_hours || 2) * 3600e3);
   if (!state.settings.mealAlarm || !due || e.glucose != null || due < Date.now()) {
@@ -254,7 +264,7 @@ function loginView() {
 
 /* ---------- 화면: 하루 ---------- */
 function pendingText(e) {
-  if (e.slot !== 'fasting' && e.meal_at) {
+  if (e.slot !== 'fasting' && e.slot !== 'bedtime' && e.meal_at) {
     const due = new Date(new Date(e.meal_at).getTime() + (e.post_hours || 2) * 3600e3);
     const left = Math.round((due - Date.now()) / 60000);
     if (left > 0) return `⏰ ${hhmm(due.toISOString())} 측정 (${duration(left)} 남음)`;
@@ -269,7 +279,7 @@ function card(slot, e) {
     return `<button class="card empty" data-action="edit" data-slot="${slot}">
       <span class="slot">${name}</span><span class="muted">탭해서 기록하기</span></button>`;
   }
-  const meal = slot !== 'fasting';
+  const meal = slot !== 'fasting' && slot !== 'bedtime';
   let elapsed = '';
   if (meal && e.meal_at && e.glucose_at) {
     const m = Math.round((new Date(e.glucose_at) - new Date(e.meal_at)) / 60000);
@@ -280,18 +290,29 @@ function card(slot, e) {
       <div class="grow"><div class="sub">식사${e.meal_at ? ' ' + hhmm(e.meal_at) : ''}</div>
       <div class="food">${e.food ? esc(e.food) : '<span class="muted">메뉴 미입력</span>'}</div></div>
       ${thumb(e.food_photo)}</div>` : '';
+  const preGlRow = meal && e.pre_glucose != null
+    ? `<div class="row">
+        <span class="ico">🩸</span>
+        <div class="grow"><div class="sub">식전${e.pre_glucose_at ? ' · ' + hhmm(e.pre_glucose_at) : ''}</div>
+        <div><b class="num">${e.pre_glucose}</b><span class="unit">mg/dL</span> ${preBadge(e)}</div></div></div>`
+    : '';
   const value = e.glucose != null
     ? `<b class="num">${e.glucose}</b><span class="unit">mg/dL</span> ${badge(e)}`
     : `<span class="muted">${pendingText(e)}</span>`;
+  const glSubLabel = meal ? `식후 ${e.post_hours || 2}시간 기준` : slot === 'bedtime' ? '취침 전' : '공복';
   const glRow = `<div class="row">
       <span class="ico">🩸</span>
-      <div class="grow"><div class="sub">${meal ? `식후 ${e.post_hours || 2}시간 기준` : '공복'}${e.glucose_at ? ' · ' + hhmm(e.glucose_at) : ''}${elapsed}</div>
+      <div class="grow"><div class="sub">${glSubLabel}${e.glucose_at ? ' · ' + hhmm(e.glucose_at) : ''}${elapsed}</div>
       <div>${value}</div></div>
       ${thumb(e.glucose_photo)}</div>`;
+  const ketoneRow = slot === 'fasting' && e.ketone != null
+    ? `<div class="row"><span class="ico">🧪</span><div class="grow"><div class="sub">케톤</div>
+        <div><b class="num">${e.ketone}</b><span class="unit">mmol/L</span></div></div></div>`
+    : '';
   const exRow = meal && e.exercise != null
     ? `<div class="ex ${e.exercise ? 'on' : ''}">${e.exercise ? `🚶 식후 운동 ${e.exercise_min ? e.exercise_min + '분' : '했어요'}` : '식후 운동 안 했어요'}</div>` : '';
   return `<div class="card ${status(e) || ''}" data-action="edit" data-slot="${slot}" data-id="${e.id}">
-    <div class="slot">${name}</div>${mealRow}${glRow}${exRow}${e.memo ? `<div class="memo">${esc(e.memo)}</div>` : ''}</div>`;
+    <div class="slot">${name}</div>${mealRow}${preGlRow}${glRow}${ketoneRow}${exRow}${e.memo ? `<div class="memo">${esc(e.memo)}</div>` : ''}</div>`;
 }
 
 function dayView() {
@@ -318,7 +339,7 @@ function chart(slot, days) {
     const e = state.week.find((x) => x.day === d && x.slot === slot && x.glucose != null);
     return e ? { i, e } : null;
   }).filter(Boolean);
-  const target = slot === 'fasting' ? s.fasting : (s.postHours === 1 ? s.post1h : s.post2h);
+  const target = slot === 'fasting' ? s.fasting : slot === 'bedtime' ? s.post2h : (s.postHours === 1 ? s.post1h : s.post2h);
   const vals = pts.map((p) => p.e.glucose);
   const lo = Math.floor((Math.min(target, ...vals) - 20) / 20) * 20;
   const hi = Math.ceil((Math.max(target, ...vals) + 20) / 20) * 20;
@@ -356,7 +377,7 @@ function weekHeader() {
 
 // 식후 운동한 식사 vs 안 한 식사의 식후 혈당 비교
 function exercisePanel() {
-  const post = state.week.filter((e) => e.slot !== 'fasting' && e.glucose != null && e.exercise != null);
+  const post = state.week.filter((e) => e.slot !== 'fasting' && e.slot !== 'bedtime' && e.glucose != null && e.exercise != null);
   if (!post.length) {
     return `<div class="panel"><div class="panel-head"><b>🚶 식후 운동</b><span class="muted">기록 없음</span></div>
       <p class="hint">식사를 기록할 때 식후 운동 여부를 남기면, 운동한 날과 안 한 날의 혈당을 비교해 드려요.</p></div>`;
@@ -401,7 +422,7 @@ function mealLine(e) {
 
 function mealsView() {
   const days = [...Array(7)].map((_, i) => addDays(state.weekStart, i));
-  const meals = state.week.filter((e) => e.slot !== 'fasting')
+  const meals = state.week.filter((e) => e.slot !== 'fasting' && e.slot !== 'bedtime')
     .sort((a, b) => mealKey(a).localeCompare(mealKey(b)));
   const exCount = meals.filter((e) => e.exercise).length;
   const high = meals.filter((e) => status(e) === 'high');
@@ -530,7 +551,7 @@ function openSheet(slot, id) {
     food_photo: e?.food_photo || null, glucose_photo: e?.glucose_photo || null,
     foodFile: null, glucoseFile: null, foodPreview: null, glucosePreview: null,
   };
-  const meal = slot !== 'fasting';
+  const meal = slot !== 'fasting' && slot !== 'bedtime';
   const ph = e?.post_hours || state.settings.postHours;
   const mealTime = e ? hhmm(e.meal_at) : nowHHMM();
   const glTime = e ? hhmm(e.glucose_at) : (meal ? '' : nowHHMM());
@@ -552,14 +573,19 @@ function openSheet(slot, id) {
           </div></div>
       </fieldset>` : ''}
       <fieldset><legend>🩸 혈당</legend>
-        ${meal ? `<div class="seg">
+        ${meal ? `<div class="two">
+          <label>식전 혈당 (mg/dL)<input type="number" inputmode="numeric" name="pre_glucose" min="20" max="600" value="${e?.pre_glucose ?? ''}" placeholder="선택"></label>
+          <label>식전 시각<input type="time" name="pre_glucose_time" value="${e ? hhmm(e.pre_glucose_at) : ''}"></label>
+        </div>
+        <div class="seg">
           <label><input type="radio" name="post_hours" value="1" ${ph === 1 ? 'checked' : ''}><span>식후 1시간</span></label>
           <label><input type="radio" name="post_hours" value="2" ${ph === 2 ? 'checked' : ''}><span>식후 2시간</span></label></div>` : ''}
         <div class="two">
-          <label>혈당 (mg/dL)<input type="number" inputmode="numeric" name="glucose" min="20" max="600" value="${e?.glucose ?? ''}" placeholder="${meal ? '측정 후 입력' : ''}"></label>
+          <label>${meal ? '식후 혈당 (mg/dL)' : '혈당 (mg/dL)'}<input type="number" inputmode="numeric" name="glucose" min="20" max="600" value="${e?.glucose ?? ''}" placeholder="${meal ? '측정 후 입력' : ''}"></label>
           <label>측정 시각<input type="time" name="glucose_time" value="${glTime}"></label>
         </div>
         ${photoField('glucose')}
+        ${slot === 'fasting' ? `<label>케톤 (mmol/L, 선택)<input type="number" inputmode="decimal" step="0.1" name="ketone" min="0" max="20" value="${e?.ketone ?? ''}" placeholder="예) 0.3"></label>` : ''}
       </fieldset>
       <label>메모<textarea name="memo" rows="2" placeholder="컨디션, 특이사항">${esc(e?.memo)}</textarea></label>
       ${meal ? '<p class="hint">식사만 먼저 저장해 두면, 측정 시간에 알림이 와요. 혈당은 나중에 다시 눌러 입력하세요.</p>' : ''}
@@ -580,7 +606,7 @@ function closeSheet() {
 async function saveEntry(form) {
   const ed = state.edit;
   const fd = new FormData(form);
-  const meal = ed.slot !== 'fasting';
+  const meal = ed.slot !== 'fasting' && ed.slot !== 'bedtime';
   const btn = form.querySelector('[type=submit]');
   btn.disabled = true;
   btn.textContent = '저장 중…';
@@ -600,6 +626,14 @@ async function saveEntry(form) {
       const mins = Math.round(Number(fd.get('exercise_min'))) || null;
       row.exercise = ex === 'yes' || (ex == null && mins) ? true : ex === 'no' ? false : null;
       row.exercise_min = row.exercise ? mins : null;
+      const pg = fd.get('pre_glucose');
+      row.pre_glucose = pg === '' || pg == null ? null : Math.round(Number(pg));
+      const pgt = fd.get('pre_glucose_time');
+      row.pre_glucose_at = row.pre_glucose != null || pgt ? toIso(ed.day, pgt || null) : null;
+    }
+    if (ed.slot === 'fasting') {
+      const k = fd.get('ketone');
+      row.ketone = k === '' || k == null ? null : parseFloat(k);
     }
     row.glucose_photo = ed.glucoseFile ? await uploadPhoto(ed.glucoseFile, ed.day) : ed.glucose_photo;
 
@@ -608,7 +642,7 @@ async function saveEntry(form) {
       : sb.from('entries').insert(r)).select().single();
     let { data: saved, error } = await write(row);
     // DB에 운동 칸이 아직 없으면 그 칸만 빼고 저장
-    for (const col of ['exercise_min', 'exercise']) {
+    for (const col of ['exercise_min', 'exercise', 'ketone', 'pre_glucose_at', 'pre_glucose']) {
       if (error && (error.message || '').includes(col) && col in row) {
         delete row[col];
         if (col === 'exercise') delete row.exercise_min;
@@ -659,12 +693,13 @@ async function exportCsv() {
   const order = { fasting: 0, breakfast: 1, lunch: 2, dinner: 3, snack: 4 };
   data.sort((a, b) => a.day.localeCompare(b.day) || order[a.slot] - order[b.slot]);
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const head = ['날짜', '구분', '식사시각', '메뉴', '식후운동', '측정기준', '혈당(mg/dL)', '측정시각', '판정', '메모'];
+  const head = ['날짜', '구분', '식사시각', '메뉴', '식전혈당(mg/dL)', '식전시각', '식후운동', '측정기준', '혈당(mg/dL)', '측정시각', '판정', '케톤(mmol/L)', '메모'];
   const lines = data.map((e) => [
     e.day, SLOT_NAME[e.slot], hhmm(e.meal_at), e.food,
+    e.pre_glucose ?? '', e.pre_glucose_at ? hhmm(e.pre_glucose_at) : '',
     e.exercise == null ? '' : e.exercise ? (e.exercise_min ? `${e.exercise_min}분` : '함') : '안 함',
-    e.slot === 'fasting' ? '공복' : `식후 ${e.post_hours || 2}시간`,
-    e.glucose, hhmm(e.glucose_at), status(e) ? STATUS_LABEL[status(e)].slice(2) : '', e.memo,
+    e.slot === 'fasting' ? '공복' : e.slot === 'bedtime' ? '취침 전' : `식후 ${e.post_hours || 2}시간`,
+    e.glucose, hhmm(e.glucose_at), status(e) ? STATUS_LABEL[status(e)].slice(2) : '', e.ketone ?? '', e.memo,
   ].map(q).join(','));
   const blob = new Blob(['﻿' + [head.map(q).join(','), ...lines].join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
@@ -761,6 +796,10 @@ document.addEventListener('input', (ev) => {
   }
   if (ev.target.name === 'glucose') {
     const t = ev.target.form.elements.glucose_time;
+    if (t && !t.value && ev.target.value) t.value = nowHHMM();
+  }
+  if (ev.target.name === 'pre_glucose') {
+    const t = ev.target.form?.elements.pre_glucose_time;
     if (t && !t.value && ev.target.value) t.value = nowHHMM();
   }
 });
