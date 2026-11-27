@@ -336,15 +336,17 @@ function dayView() {
 }
 
 /* ---------- 화면: 통계 ---------- */
-function chart(slot, days) {
+function chart(slot, days, field = 'glucose') {
   const s = state.settings;
   const W = 320, H = 140, pl = 34, pr = 12, pt = 12, pb = 24;
+  const isPre = field === 'pre_glucose';
   const pts = days.map((d, i) => {
-    const e = state.week.find((x) => x.day === d && x.slot === slot && x.glucose != null);
-    return e ? { i, e } : null;
+    const e = state.week.find((x) => x.day === d && x.slot === slot && x[field] != null);
+    return e ? { i, e, v: e[field] } : null;
   }).filter(Boolean);
-  const target = slot === 'fasting' ? s.fasting : slot === 'bedtime' ? s.post2h : (s.postHours === 1 ? s.post1h : s.post2h);
-  const vals = pts.map((p) => p.e.glucose);
+  if (!pts.length) return `<p class="muted" style="font-size:13px;text-align:center;padding:16px 0">기록 없음</p>`;
+  const target = isPre ? s.fasting : slot === 'fasting' ? s.fasting : slot === 'bedtime' ? s.post2h : (s.postHours === 1 ? s.post1h : s.post2h);
+  const vals = pts.map((p) => p.v);
   const lo = Math.floor((Math.min(target, ...vals) - 20) / 20) * 20;
   const hi = Math.ceil((Math.max(target, ...vals) + 20) / 20) * 20;
   const x = (i) => pl + (i * (W - pl - pr)) / 6;
@@ -355,14 +357,14 @@ function chart(slot, days) {
     grid += `<line x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${pl - 6}" y="${y(v) + 3.5}" class="axis" text-anchor="end">${v}</text>`;
   }
   const xl = days.map((d, i) => `<text x="${x(i)}" y="${H - 6}" class="axis" text-anchor="middle">${WD[parseDay(d).getDay()]}</text>`).join('');
-  const line = pts.length > 1 ? `<polyline points="${pts.map((p) => `${x(p.i)},${y(p.e.glucose)}`).join(' ')}" class="series"/>` : '';
+  const line = pts.length > 1 ? `<polyline points="${pts.map((p) => `${x(p.i)},${y(p.v)}`).join(' ')}" class="series"/>` : '';
   const dots = pts.map((p) => {
-    const st = status(p.e);
-    const tip = `${shortDay(p.e.day)} ${SLOT_NAME[slot]} ${p.e.glucose} mg/dL · ${STATUS_LABEL[st]}`;
-    return `<circle cx="${x(p.i)}" cy="${y(p.e.glucose)}" r="5" class="dot ${st}"/>
-      <circle cx="${x(p.i)}" cy="${y(p.e.glucose)}" r="16" class="hit" data-tip="${esc(tip)}"/>`;
+    const st = isPre ? preStatus(p.e) : status(p.e);
+    const tip = `${shortDay(p.e.day)} ${p.v} mg/dL${st ? ' · ' + STATUS_LABEL[st] : ''}`;
+    return `<circle cx="${x(p.i)}" cy="${y(p.v)}" r="5" class="dot ${st || 'ok'}"/>
+      <circle cx="${x(p.i)}" cy="${y(p.v)}" r="16" class="hit" data-tip="${esc(tip)}"/>`;
   }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${SLOT_NAME[slot]} 혈당 추이">
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img">
     ${grid}${xl}
     <line x1="${pl}" x2="${W - pr}" y1="${y(target)}" y2="${y(target)}" class="target"/>
     <text x="${W - pr}" y="${y(target) - 5}" class="axis" text-anchor="end">목표 ${target} 미만</text>
@@ -458,34 +460,90 @@ function mealsView() {
 function statsView() {
   const days = [...Array(7)].map((_, i) => addDays(state.weekStart, i));
   const measured = state.week.filter((e) => e.glucose != null);
+  const preMeasured = state.week.filter((e) => e.pre_glucose != null);
   const count = (st) => measured.filter((e) => status(e) === st).length;
-  const okRate = measured.length ? Math.round((count('ok') / measured.length) * 100) : null;
-  const cell = (d, k) => {
-    const e = state.week.find((x) => x.day === d && x.slot === k && x.glucose != null);
+  const preCount = (st) => preMeasured.filter((e) => preStatus(e) === st).length;
+  const totalOk = count('ok') + preCount('ok');
+  const totalAll = measured.length + preMeasured.length;
+  const okRate = totalAll ? Math.round((totalOk / totalAll) * 100) : null;
+
+  // 케톤 패널
+  const kEntries = state.week.filter((e) => e.slot === 'breakfast' && e.ketone != null);
+  const kPos = kEntries.filter((e) => e.ketone > 0);
+  const kDots = days.map((d) => {
+    const e = kEntries.find((x) => x.day === d);
+    if (!e) return `<div class="k-dot"><div class="k-wd">${WD[parseDay(d).getDay()]}</div><div class="k-v muted">–</div></div>`;
+    const pos = e.ketone > 0;
+    const sym = { 5: '±', 15: '+', 50: '++', 100: '+++' };
+    return `<div class="k-dot ${pos ? 'pos' : 'neg'}">
+      <div class="k-wd">${WD[parseDay(d).getDay()]}</div>
+      <div class="k-v">${pos ? (sym[e.ketone] ?? '+') : '음성'}</div>
+    </div>`;
+  }).join('');
+  const ketonePanel = `<div class="panel">
+    <div class="panel-head"><b>🧪 케톤 (소변)</b><span class="muted">${kEntries.length ? `양성 ${kPos.length}일 · 음성 ${kEntries.length - kPos.length}일` : '기록 없음'}</span></div>
+    ${kEntries.length ? `<div class="ketone-week">${kDots}</div>` : '<p class="hint">아침 카드에서 케톤을 입력하면 여기서 볼 수 있어요.</p>'}
+    ${kPos.length ? `<p class="hint" style="color:var(--high-ink)">이번 주 ${kPos.length}일 양성 — 탄수화물 섭취량을 확인해 주세요.</p>` : ''}
+  </div>`;
+
+  // 그리드 표
+  const glCell = (d, slot) => {
+    const e = state.week.find((x) => x.day === d && x.slot === slot && x.glucose != null);
     if (!e) return '<td class="muted">–</td>';
     const st = status(e);
-    return `<td><span class="cell ${st}">${e.glucose}${st === 'ok' ? '' : st === 'high' ? ' ▲' : ' ▼'}</span></td>`;
+    return `<td><span class="cell ${st}">${e.glucose}${st === 'high' ? '▲' : st === 'low' ? '▼' : ''}</span></td>`;
   };
-  const rows = days.map((d) => `<tr data-action="goto" data-day="${d}"><th>${shortDay(d)}</th>${SLOTS.map((k) => cell(d, k)).join('')}</tr>`).join('');
-  const charts = SLOTS.map((k) => {
-    const v = state.week.filter((e) => e.slot === k && e.glucose != null);
-    const avg = v.length ? Math.round(v.reduce((a, e) => a + e.glucose, 0) / v.length) : null;
-    const over = v.filter((e) => status(e) === 'high').length;
-    return `<div class="panel"><div class="panel-head"><b>${SLOT_NAME[k]}</b>
-      <span class="muted">${avg != null ? `평균 ${avg} · 초과 ${over}회` : '기록 없음'}</span></div>${chart(k, days)}</div>`;
-  }).join('');
+  const preCell = (d, slot) => {
+    const e = state.week.find((x) => x.day === d && x.slot === slot && x.pre_glucose != null);
+    if (!e) return '<td class="muted">–</td>';
+    const st = preStatus(e);
+    return `<td><span class="cell ${st}">${e.pre_glucose}${st === 'high' ? '▲' : st === 'low' ? '▼' : ''}</span></td>`;
+  };
+  const kCell = (d) => {
+    const e = state.week.find((x) => x.day === d && x.slot === 'breakfast' && x.ketone != null);
+    if (!e) return '<td class="muted">–</td>';
+    return `<td><span class="cell ${e.ketone > 0 ? 'high' : 'ok'}">${e.ketone > 0 ? '양성' : '음성'}</span></td>`;
+  };
+  const rows = days.map((d) => `<tr data-action="goto" data-day="${d}">
+    <th>${shortDay(d)}</th>
+    ${kCell(d)}${preCell(d, 'breakfast')}${glCell(d, 'breakfast')}
+    ${preCell(d, 'lunch')}${glCell(d, 'lunch')}
+    ${preCell(d, 'dinner')}${glCell(d, 'dinner')}
+    ${glCell(d, 'bedtime')}
+  </tr>`).join('');
+
+  // 차트
+  const mkChart = (title, slot, field = 'glucose') => {
+    const v = state.week.filter((e) => e.slot === slot && e[field] != null);
+    const avg = v.length ? Math.round(v.reduce((a, e) => a + e[field], 0) / v.length) : null;
+    const over = v.filter((e) => (field === 'glucose' ? status(e) : preStatus(e)) === 'high').length;
+    return `<div class="panel"><div class="panel-head"><b>${title}</b>
+      <span class="muted">${avg != null ? `평균 ${avg} · 초과 ${over}회` : '기록 없음'}</span></div>
+      ${chart(slot, days, field)}</div>`;
+  };
+  const charts = [
+    mkChart('공복 혈당', 'breakfast', 'pre_glucose'),
+    mkChart('아침 식후', 'breakfast'),
+    mkChart('점심 식전', 'lunch', 'pre_glucose'),
+    mkChart('점심 식후', 'lunch'),
+    mkChart('저녁 식전', 'dinner', 'pre_glucose'),
+    mkChart('저녁 식후', 'dinner'),
+    mkChart('취침 전', 'bedtime'),
+  ].join('');
+
   return `${weekHeader()}
     <section class="list">
       <div class="tiles">
-        <div class="tile"><span class="muted">측정</span><b>${measured.length}<small>회</small></b></div>
+        <div class="tile"><span class="muted">측정 횟수</span><b>${totalAll}<small>회</small></b></div>
         <div class="tile"><span class="muted">목표 달성</span><b>${okRate ?? '–'}<small>${okRate != null ? '%' : ''}</small></b></div>
-        <div class="tile"><span class="muted">초과</span><b>${count('high')}<small>회</small></b></div>
+        <div class="tile"><span class="muted">초과</span><b>${count('high') + preCount('high')}<small>회</small></b></div>
       </div>
+      ${ketonePanel}
       ${exercisePanel()}
-      <div class="panel"><table class="grid-table">
-        <thead><tr><th></th>${SLOTS.map((k) => `<th>${SLOT_NAME[k]}</th>`).join('')}</tr></thead>
-        <tbody>${rows}</tbody></table>
-        <p class="hint">날짜를 누르면 그날 기록으로 이동해요.</p></div>
+      <div class="panel"><div style="overflow-x:auto"><table class="grid-table">
+        <thead><tr><th></th><th>케톤</th><th>공복</th><th>아침↑</th><th>점↓</th><th>점↑</th><th>저↓</th><th>저↑</th><th>취침</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+        <p class="hint">↓ 식전 &nbsp; ↑ 식후 &nbsp;· 날짜를 누르면 그날 기록으로 이동해요.</p></div>
       ${charts}
     </section>`;
 }
