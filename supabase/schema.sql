@@ -27,6 +27,7 @@ alter table public.entries add column if not exists ketone numeric(4,1) check (k
 -- 식전 혈당
 alter table public.entries add column if not exists pre_glucose int check (pre_glucose between 10 and 700);
 alter table public.entries add column if not exists pre_glucose_at timestamptz;
+alter table public.entries add column if not exists pre_glucose_photo text;
 -- 취침 전 슬롯 추가
 alter table public.entries drop constraint if exists entries_slot_check;
 alter table public.entries add constraint entries_slot_check check (slot in ('fasting', 'breakfast', 'lunch', 'dinner', 'snack', 'bedtime'));

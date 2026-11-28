@@ -135,7 +135,7 @@ async function loadDay() {
   const { data, error } = await sb.from('entries').select('*').eq('day', state.day).order('created_at');
   if (error) return toast(error.message);
   state.entries = data;
-  await signUrls(data.flatMap((e) => [e.food_photo, e.glucose_photo]));
+  await signUrls(data.flatMap((e) => [e.food_photo, e.pre_glucose_photo, e.glucose_photo]));
 }
 
 async function loadWeek() {
@@ -298,7 +298,8 @@ function card(slot, e) {
     ? `<div class="row">
         <span class="ico">🩸</span>
         <div class="grow"><div class="sub">${preGlLabel}${e.pre_glucose_at ? ' · ' + hhmm(e.pre_glucose_at) : ''}</div>
-        <div><b class="num">${e.pre_glucose}</b><span class="unit">mg/dL</span> ${preBadge(e)}</div></div></div>`
+        <div><b class="num">${e.pre_glucose}</b><span class="unit">mg/dL</span> ${preBadge(e)}</div></div>
+        ${thumb(e.pre_glucose_photo)}</div>`
     : '';
   const value = e.glucose != null
     ? `<b class="num">${e.glucose}</b><span class="unit">mg/dL</span> ${badge(e)}`
@@ -598,7 +599,7 @@ function settingsView() {
 /* ---------- 입력 시트 ---------- */
 function photoField(kind) {
   const ed = state.edit;
-  const label = kind === 'food' ? '음식 사진' : '혈당계 사진';
+  const label = kind === 'food' ? '음식 사진' : kind === 'pre_glucose' ? '식전 혈당계 사진' : '식후 혈당계 사진';
   const src = ed[kind + 'Preview'] || (ed[kind + '_photo'] && urlCache.get(ed[kind + '_photo']));
   return `<div class="photo-field" data-kind="${kind}">
     ${src ? `<img src="${src}" alt="" data-action="photo" data-src="${src}"><button type="button" class="link" data-action="photo-remove" data-kind="${kind}">사진 삭제</button>` : ''}
@@ -610,8 +611,9 @@ function openSheet(slot, id) {
   const e = id ? state.entries.find((x) => x.id === id) : slot !== 'snack' ? state.entries.find((x) => x.slot === slot) : null;
   state.edit = {
     slot, id: e?.id || null, day: state.day, orig: e || null,
-    food_photo: e?.food_photo || null, glucose_photo: e?.glucose_photo || null,
-    foodFile: null, glucoseFile: null, foodPreview: null, glucosePreview: null,
+    food_photo: e?.food_photo || null, pre_glucose_photo: e?.pre_glucose_photo || null, glucose_photo: e?.glucose_photo || null,
+    foodFile: null, pre_glucoseFile: null, glucoseFile: null,
+    foodPreview: null, pre_glucosePreview: null, glucosePreview: null,
   };
   const meal = slot !== 'fasting' && slot !== 'bedtime';
   const ph = e?.post_hours || state.settings.postHours;
@@ -639,6 +641,7 @@ function openSheet(slot, id) {
           <label>${slot === 'breakfast' ? '공복 혈당 (mg/dL)' : '식전 혈당 (mg/dL)'}<input type="number" inputmode="numeric" name="pre_glucose" min="20" max="600" value="${e?.pre_glucose ?? ''}" placeholder="선택"></label>
           <label>${slot === 'breakfast' ? '공복 시각' : '식전 시각'}<input type="time" name="pre_glucose_time" value="${e ? hhmm(e.pre_glucose_at) : ''}"></label>
         </div>
+        ${photoField('pre_glucose')}
         <div class="seg">
           <label><input type="radio" name="post_hours" value="1" ${ph === 1 ? 'checked' : ''}><span>식후 1시간</span></label>
           <label><input type="radio" name="post_hours" value="2" ${ph === 2 ? 'checked' : ''}><span>식후 2시간</span></label></div>` : ''}
@@ -699,6 +702,7 @@ async function saveEntry(form) {
       row.pre_glucose = pg === '' || pg == null ? null : Math.round(Number(pg));
       const pgt = fd.get('pre_glucose_time');
       row.pre_glucose_at = row.pre_glucose != null || pgt ? toIso(ed.day, pgt || null) : null;
+      row.pre_glucose_photo = ed.pre_glucoseFile ? await uploadPhoto(ed.pre_glucoseFile, ed.day) : ed.pre_glucose_photo;
     }
     if (ed.slot === 'breakfast') {
       const k = fd.get('ketone');
@@ -711,7 +715,7 @@ async function saveEntry(form) {
       : sb.from('entries').insert(r)).select().single();
     let { data: saved, error } = await write(row);
     // DB에 운동 칸이 아직 없으면 그 칸만 빼고 저장
-    for (const col of ['exercise_min', 'exercise', 'ketone', 'pre_glucose_at', 'pre_glucose']) {
+    for (const col of ['exercise_min', 'exercise', 'ketone', 'pre_glucose_at', 'pre_glucose', 'pre_glucose_photo']) {
       if (error && (error.message || '').includes(col) && col in row) {
         delete row[col];
         if (col === 'exercise') delete row.exercise_min;
@@ -720,7 +724,8 @@ async function saveEntry(form) {
     }
     if (error) throw error.code === '23505' ? new Error('다른 기기에서 이미 기록했어요. 화면을 새로고침해 주세요.') : error;
 
-    const old = [ed.orig?.food_photo, ed.orig?.glucose_photo].filter((p) => p && p !== saved.food_photo && p !== saved.glucose_photo);
+    const old = [ed.orig?.food_photo, ed.orig?.pre_glucose_photo, ed.orig?.glucose_photo]
+      .filter((p) => p && p !== saved.food_photo && p !== saved.pre_glucose_photo && p !== saved.glucose_photo);
     if (old.length) await sb.storage.from('photos').remove(old);
     await syncMealReminder(saved);
 
@@ -746,7 +751,7 @@ async function deleteEntry() {
   }
   const { error } = await sb.from('entries').delete().eq('id', ed.id);
   if (error) return toast('삭제 실패: ' + error.message);
-  const photos = [ed.orig?.food_photo, ed.orig?.glucose_photo].filter(Boolean);
+  const photos = [ed.orig?.food_photo, ed.orig?.pre_glucose_photo, ed.orig?.glucose_photo].filter(Boolean);
   if (photos.length) await sb.storage.from('photos').remove(photos);
   await sb.from('reminders').delete().eq('key', `meal-${ed.id}`).eq('sent', false);
   closeSheet();
